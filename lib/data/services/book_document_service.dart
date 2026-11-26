@@ -52,7 +52,9 @@ class BookDocumentService {
   ) async {
     if (kIsWeb) return downloadBytesOverHttp(http.Client(), uris, headers);
     final client = HttpClient()
-      ..findProxy = ((_) => serverProxyFindProxy ?? 'DIRECT')
+      ..findProxy =
+          ((uri) =>
+              serverProxyFindProxy ?? HttpClient.findProxyFromEnvironment(uri))
       ..userAgent = serverUserAgent;
     try {
       HttpException? lastError;
@@ -153,7 +155,9 @@ class BookDocumentService {
   ) async {
     if (kIsWeb) return probeExtensionOverHttp(http.Client(), uris, headers);
     final client = HttpClient()
-      ..findProxy = ((_) => serverProxyFindProxy ?? 'DIRECT')
+      ..findProxy =
+          ((uri) =>
+              serverProxyFindProxy ?? HttpClient.findProxyFromEnvironment(uri))
       ..userAgent = serverUserAgent;
     try {
       for (final uri in uris) {

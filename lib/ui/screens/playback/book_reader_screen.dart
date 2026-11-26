@@ -779,7 +779,7 @@ class _BookReaderScreenState extends State<BookReaderScreen>
           _mode = _ReaderMode.web;
           _webController = null;
           _webUri = uri;
-          _webHeaders = headers;
+          _webHeaders = {...headers, ...serverRequestHeadersFor(uri)};
           _webLoadProgress = 0;
         });
       }
@@ -1340,7 +1340,9 @@ class _BookReaderScreenState extends State<BookReaderScreen>
     Map<String, String> headers,
   ) async {
     final client = HttpClient()
-      ..findProxy = ((_) => serverProxyFindProxy ?? 'DIRECT')
+      ..findProxy =
+          ((uri) =>
+              serverProxyFindProxy ?? HttpClient.findProxyFromEnvironment(uri))
       ..userAgent = serverUserAgent;
     final l10n = AppLocalizations.of(context);
     try {
@@ -1357,19 +1359,18 @@ class _BookReaderScreenState extends State<BookReaderScreen>
           continue;
         }
 
-        var request = await client.openUrl('HEAD', uri);
-        headers.forEach(request.headers.add);
-        serverRequestHeadersFor(uri).forEach(request.headers.set);
-        var response = await request.close();
+        var response = await _probeUri(client, 'HEAD', uri, headers);
 
         if (response.statusCode == HttpStatus.methodNotAllowed ||
             response.statusCode == HttpStatus.notImplemented) {
           await response.drain<void>();
-          request = await client.getUrl(uri);
-          headers.forEach(request.headers.add);
-          serverRequestHeadersFor(uri).forEach(request.headers.set);
-          request.headers.set(HttpHeaders.rangeHeader, 'bytes=0-0');
-          response = await request.close();
+          response = await _probeUri(
+            client,
+            'GET',
+            uri,
+            headers,
+            extra: const {HttpHeaders.rangeHeader: 'bytes=0-0'},
+          );
         }
 
         if (response.statusCode >= 200 && response.statusCode < 400) {
@@ -1386,6 +1387,38 @@ class _BookReaderScreenState extends State<BookReaderScreen>
       throw lastError ?? HttpException(l10n.noReadableBookEndpointAvailable);
     } finally {
       client.close(force: true);
+    }
+  }
+
+  /// Probes [uri] without leaking origin-scoped saved headers across redirects.
+  static Future<HttpClientResponse> _probeUri(
+    HttpClient client,
+    String method,
+    Uri uri,
+    Map<String, String> headers, {
+    Map<String, String> extra = const {},
+  }) async {
+    var target = uri;
+    for (var redirects = 0; ; redirects++) {
+      final request = await client.openUrl(method, target);
+      request.followRedirects = false;
+      headers.forEach(request.headers.set);
+      extra.forEach(request.headers.set);
+      serverRequestHeadersFor(target).forEach(request.headers.set);
+      final response = await request.close();
+
+      final location = response.headers.value(HttpHeaders.locationHeader);
+      if (!response.isRedirect ||
+          location == null ||
+          location.isEmpty ||
+          redirects >= 5) {
+        return response;
+      }
+      final next = target.resolve(location);
+      if (!isSameOriginRedirect(target, next)) return response;
+
+      await response.drain<void>();
+      target = next;
     }
   }
 

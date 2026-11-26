@@ -891,9 +891,13 @@ Future<Map<String, dynamic>?> fetchOwnTranscodingInfo(
     final sessions = await client.sessionApi.getSessions().timeout(
       const Duration(milliseconds: 1500),
     );
+    final selfDeviceId = serverDeviceIdFor(
+      client.serverType,
+      client.deviceInfo,
+    );
     final own = sessions.where((session) {
       final sourceId = (session['PlayState'] as Map?)?['MediaSourceId'];
-      return session['DeviceId']?.toString() == client.deviceInfo.id &&
+      return session['DeviceId']?.toString() == selfDeviceId &&
           (sourceId == null ||
               sourceId.toString() == resolution!.mediaSourceId);
     }).firstOrNull;

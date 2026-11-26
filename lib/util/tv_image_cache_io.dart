@@ -396,8 +396,11 @@ HttpClient buildImageHttpClient() => HttpClient()
   ..maxConnectionsPerHost = imageRequestSlots
   ..connectionTimeout = const Duration(seconds: 8)
   // Artwork reaches the same server as the API calls, so it takes the same
-  // proxy. Read per connection, so a change applies to the next image.
-  ..findProxy = ((_) => serverProxyFindProxy ?? 'DIRECT')
+  // proxy. Read per connection, so a change applies to the next image. When
+  // unset, fall back to dart:io's environment lookup so http_proxy works.
+  ..findProxy =
+      ((uri) =>
+          serverProxyFindProxy ?? HttpClient.findProxyFromEnvironment(uri))
   // dart:io reuses a pooled connection without checking it is still open, so
   // the longer one is held the better the odds the peer let go of it in the
   // meantime. Two minutes covered a whole browse, and a stale one there stalls
@@ -452,12 +455,71 @@ class _ServerUserAgentHttpClient extends http.BaseClient {
 
   final http.Client _inner;
 
+  static const _redirectStatuses = {301, 302, 303, 307, 308};
+  static const _crossOriginStrippedHeaders = {
+    'authorization',
+    'cookie',
+    'proxy-authorization',
+    'proxy-authenticate',
+    'www-authenticate',
+    'x-emby-authorization',
+    'x-emby-token',
+    'x-mediabrowser-token',
+    'x-plex-token',
+    'x-profile-token',
+  };
+
   @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) {
-    // Artwork reaches the same server as the API calls, so a header saved for
-    // that server applies here too. A saved User-Agent wins over the default.
-    request.headers.addAll(serverRequestHeadersFor(request.url));
-    request.headers.putIfAbsent('User-Agent', () => serverUserAgent);
-    return _inner.send(request);
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final initialSaved = serverRequestHeadersFor(request.url);
+    if (initialSaved.isEmpty) {
+      _putDefaultUserAgent(request.headers);
+      return _inner.send(request);
+    }
+
+    // dart:io only strips Authorization and Cookie on cross-origin redirects,
+    // so a saved custom header would leak to a redirect target. Follow GET and
+    // HEAD redirects manually here and re-evaluate saved headers per hop.
+    var target = request.url;
+    var baseHeaders = Map<String, String>.from(request.headers);
+    final maxRedirects = request.maxRedirects;
+
+    for (var redirects = 0; ; redirects++) {
+      final hop = http.Request(request.method, target)
+        ..followRedirects = false
+        ..persistentConnection = request.persistentConnection;
+      hop.headers.addAll(baseHeaders);
+      hop.headers.addAll(serverRequestHeadersFor(target));
+      _putDefaultUserAgent(hop.headers);
+
+      final response = await _inner.send(hop);
+      final location = response.headers['location'];
+      if (!request.followRedirects ||
+          !_redirectStatuses.contains(response.statusCode) ||
+          location == null ||
+          location.isEmpty ||
+          (request.method != 'GET' && request.method != 'HEAD') ||
+          redirects >= maxRedirects) {
+        return response;
+      }
+
+      final next = target.resolve(location);
+      if (!isSameOriginRedirect(target, next)) {
+        baseHeaders = {
+          for (final entry in baseHeaders.entries)
+            if (!_crossOriginStrippedHeaders.contains(entry.key.toLowerCase()))
+              entry.key: entry.value,
+        };
+      }
+      await response.stream.drain<void>();
+      target = next;
+    }
+  }
+
+  static void _putDefaultUserAgent(Map<String, String> headers) {
+    final hasUserAgent = headers.keys.any(
+      (key) => key.toLowerCase() == 'user-agent',
+    );
+    if (!hasUserAgent) headers['User-Agent'] = serverUserAgent;
   }
 }

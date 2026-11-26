@@ -2270,7 +2270,10 @@ class DownloadService extends ChangeNotifier implements AutoDownloadDownloader {
     if (audioIndex != null) params['AudioStreamIndex'] = audioIndex.toString();
     if (playSessionId != null) {
       params['PlaySessionId'] = playSessionId;
-      params['DeviceId'] = _client.deviceInfo.id;
+      params['DeviceId'] = serverDeviceIdFor(
+        _client.serverType,
+        _client.deviceInfo,
+      );
     }
 
     final query = _encodeQuery(params);
@@ -2805,7 +2808,7 @@ class DownloadService extends ChangeNotifier implements AutoDownloadDownloader {
         );
         // Fallback URLs are direct copies with their own seek index, so only
         // the primary transcode URL goes through the transmux engine.
-        if (useTransmuxEngine && downloadUrl == url) {
+        if (useTransmuxEngine && !_hasServerProxy && downloadUrl == url) {
           try {
             return await _downloadWithTransmux(
               downloadUrl,
@@ -2821,7 +2824,7 @@ class DownloadService extends ChangeNotifier implements AutoDownloadDownloader {
             useTransmuxEngine = false;
           }
         }
-        if (usePluginEngine) {
+        if (usePluginEngine && !_hasServerProxy) {
           try {
             return await _downloadWithPlugin(
               downloadUrl,
@@ -2846,10 +2849,12 @@ class DownloadService extends ChangeNotifier implements AutoDownloadDownloader {
             usePluginEngine = false;
           }
         }
+        // The legacy engine applies origin-scoped saved headers per redirect
+        // hop inside its isolate so they never leak across origins.
         return _legacyEngine.downloadWithHangGuard(
           downloadUrl,
           savePath!,
-          options: Options(headers: urlHeaders, method: 'GET'),
+          options: Options(headers: headers, method: 'GET'),
           cancelToken: cancelToken,
           estimatedSize: estimatedSize,
           onReceiveProgress: onReceiveProgress,
@@ -4132,8 +4137,9 @@ class DownloadService extends ChangeNotifier implements AutoDownloadDownloader {
     }
 
     // Killed transfers that still fit come back now; the plugin no longer
-    // revives them on its own (see BackgroundDownloadCoordinator).
-    if (_pluginEngineSupported) {
+    // revives them on its own (see BackgroundDownloadCoordinator). Skip while
+    // a proxy is configured, since the native engine cannot use it.
+    if (_pluginEngineSupported && !_hasServerProxy) {
       unawaited(_coordinator!.rescheduleKilledTasks());
     }
     unawaited(sweepStagingDir());

@@ -1834,7 +1834,7 @@ class _ContentRowsState extends State<_ContentRows>
       (after ?? Future<void>.value())
           .then(
             (_) => client.playbackApi.stopActiveEncodings(
-              deviceId: client.deviceInfo.id,
+              deviceId: serverDeviceIdFor(client.serverType, client.deviceInfo),
               playSessionId: playSessionId,
             ),
           )
@@ -2356,7 +2356,8 @@ class _ContentRowsState extends State<_ContentRows>
       // The transcode is registered against these two, and stopping it later
       // looks it up the same way.
       'PlaySessionId': playSessionId,
-      if (client.deviceInfo.id.isNotEmpty) 'DeviceId': client.deviceInfo.id,
+      if (serverDeviceIdFor(client.serverType, client.deviceInfo).isNotEmpty)
+        'DeviceId': serverDeviceIdFor(client.serverType, client.deviceInfo),
       'videoCodec': 'h264',
       'audioCodec': 'aac',
       'maxVideoBitDepth': '8',

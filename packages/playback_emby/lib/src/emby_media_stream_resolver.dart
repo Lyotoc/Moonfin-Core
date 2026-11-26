@@ -155,20 +155,26 @@ class EmbyMediaStreamResolver implements MediaStreamResolver {
     final normalizationGainDb =
         MediaStreamResolver.extractNormalizationGainDb(source.mediaStreams);
 
+    final parsedUrl = Uri.tryParse(url);
+    final savedHeaders = parsedUrl == null
+        ? const <String, String>{}
+        : serverRequestHeadersFor(parsedUrl);
+
     return StreamResolutionResult(
       streamUrl: url,
-      requestHeaders: _isServerUrl(url)
-          ? {
-              ...serverImageHeaders,
-              ...buildEmbyAuthorizationHeaders(
-                deviceInfo: _client.deviceInfo,
-                accessToken: _client.accessToken,
-                userId: _client.userId,
-              ),
-              // Last, so a header saved for this server wins over a default.
-              ...serverRequestHeadersFor(Uri.parse(url)),
-            }
-          : const {},
+      requestHeaders: {
+        if (_isServerUrl(url)) ...{
+          ...serverImageHeaders,
+          ...buildEmbyAuthorizationHeaders(
+            deviceInfo: _client.deviceInfo,
+            accessToken: _client.accessToken,
+            userId: _client.userId,
+          ),
+        },
+        // Last, so a header saved for this origin wins over a default and
+        // still applies to same-origin URLs outside the server base path.
+        ...savedHeaders,
+      },
       mediaSourceId: source.id,
       liveStreamId: source.liveStreamId,
       playSessionId: playbackInfo.playSessionId,

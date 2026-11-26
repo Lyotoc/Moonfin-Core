@@ -498,7 +498,10 @@ class RemoteMediaNotificationService {
     final client = _activeClient();
     if (client == null) return null;
 
-    final selfDeviceId = client.deviceInfo.id;
+    final selfDeviceId = serverDeviceIdFor(
+      client.serverType,
+      client.deviceInfo,
+    );
     final currentUserId = client.userId;
 
     final candidates = <Map<String, dynamic>>[];

@@ -44,9 +44,10 @@ void configureServerDio(
       final client = HttpClient();
 
       // Read per connection, so a proxy change from Settings applies to the
-      // next request without rebuilding the client. `DIRECT` is what dart:io
-      // wants back when no proxy is configured.
-      client.findProxy = (_) => serverProxyFindProxy ?? 'DIRECT';
+      // next request without rebuilding the client. When unset, fall back to
+      // dart:io's environment lookup so http_proxy / https_proxy keep working.
+      client.findProxy = (uri) =>
+          serverProxyFindProxy ?? HttpClient.findProxyFromEnvironment(uri);
 
       client.badCertificateCallback = (_, host, _) =>
           acceptsUntrustedCertificate(host);
@@ -89,6 +90,18 @@ class _ServerHeaderAdapter extends IOHttpClientAdapter {
 
   static const _redirectStatuses = {301, 302, 303, 307, 308};
   static const _maxRedirects = 5;
+  static const _crossOriginStrippedHeaders = {
+    'authorization',
+    'cookie',
+    'proxy-authorization',
+    'proxy-authenticate',
+    'www-authenticate',
+    'x-emby-authorization',
+    'x-emby-token',
+    'x-mediabrowser-token',
+    'x-plex-token',
+    'x-profile-token',
+  };
 
   @override
   Future<ResponseBody> fetch(
@@ -103,12 +116,13 @@ class _ServerHeaderAdapter extends IOHttpClientAdapter {
 
     var current = options;
     var stream = requestStream;
+    var baseHeaders = Map<String, dynamic>.from(options.headers);
     for (var redirects = 0; ; redirects++) {
       // Keep overrides off the logical request. Redirect and retry
       // interceptors issue a new request and the adapter evaluates its origin
       // independently.
       final wireOptions = current.copyWith(
-        headers: {...options.headers, ...serverRequestHeadersFor(current.uri)},
+        headers: {...baseHeaders, ...serverRequestHeadersFor(current.uri)},
         followRedirects: false,
       );
       final response = await super.fetch(wireOptions, stream, cancelFuture);
@@ -123,10 +137,15 @@ class _ServerHeaderAdapter extends IOHttpClientAdapter {
       }
 
       final next = current.uri.resolve(location);
-      // Only a same-origin hop is safe to make here: the logical headers
-      // (a token, say) go out again, and a client without its own redirect
-      // interceptor never agreed to send them elsewhere.
-      if (!isSameOriginRedirect(current.uri, next)) return response;
+      if (!isSameOriginRedirect(current.uri, next)) {
+        // Strip credentials before leaving the origin; saved custom headers
+        // are re-evaluated per hop so the previous origin's never travel.
+        baseHeaders = {
+          for (final entry in baseHeaders.entries)
+            if (!_crossOriginStrippedHeaders.contains(entry.key.toLowerCase()))
+              entry.key: entry.value,
+        };
+      }
 
       await response.stream.drain<void>();
       current = current.copyWith(

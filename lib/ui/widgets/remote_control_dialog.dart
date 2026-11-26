@@ -334,7 +334,10 @@ class _RemoteControlSheetState extends State<_RemoteControlSheet>
         });
         return;
       }
-      final selfDeviceId = client.deviceInfo.id;
+      final selfDeviceId = serverDeviceIdFor(
+        client.serverType,
+        client.deviceInfo,
+      );
       final controllable = sessions.where((s) {
         final deviceId = s['DeviceId']?.toString();
         if (deviceId != null && deviceId == selfDeviceId) {

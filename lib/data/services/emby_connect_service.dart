@@ -153,7 +153,10 @@ class EmbyConnectService {
                 'X-Emby-Token': accessKey,
                 'X-Application': _applicationHeader,
                 'Accept': 'application/json',
-                ...buildEmbyAuthorizationHeaders(deviceInfo: _deviceInfo),
+                ...buildEmbyAuthorizationHeaders(
+                  deviceInfo: _deviceInfo,
+                  header: EmbyAuthorizationHeader.xEmbyAuthorization,
+                ),
               },
               responseType: ResponseType.json,
             ),

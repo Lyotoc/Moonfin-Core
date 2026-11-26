@@ -202,4 +202,45 @@ void main() {
       expect(serverRequestHeadersFor(Uri.parse('https:///x')), isEmpty);
     });
   });
+
+  group('explicit invalid proxy ports', () {
+    test('rejects out-of-range or malformed explicit ports', () {
+      expect(serverProxyRuleFor('http://proxy.example:65536'), isNull);
+      expect(serverProxyRuleFor('http://proxy.example:0'), isNull);
+      expect(serverProxyRuleFor('proxy.example:abc'), isNull);
+      expect(serverProxyRuleFor('proxy.example:'), isNull);
+    });
+  });
+
+  group('Emby device id and explicit header overrides', () {
+    const device = DeviceInfo(
+      id: 'device-1',
+      name: 'MacBook',
+      appName: 'Moonfin',
+      appVersion: '3.1.0',
+    );
+
+    test('serverEmbyDeviceId matches the sanitized authorization field', () {
+      gEmbyDeviceIdOverride = 'custom "id"';
+      final headers = buildEmbyAuthorizationHeaders(deviceInfo: device);
+      expect(serverEmbyDeviceId(device), 'custom id');
+      expect(headers['Authorization'], contains('DeviceId="custom id"'));
+    });
+
+    test('serverDeviceIdFor applies the Emby override only to Emby', () {
+      gEmbyDeviceIdOverride = 'emby-custom';
+      expect(serverDeviceIdFor(ServerType.emby, device), 'emby-custom');
+      expect(serverDeviceIdFor(ServerType.jellyfin, device), 'device-1');
+      expect(serverDeviceIdFor(ServerType.plex, device), 'device-1');
+    });
+
+    test('explicit header parameter preserves X-Emby-Authorization', () {
+      final headers = buildEmbyAuthorizationHeaders(
+        deviceInfo: device,
+        header: EmbyAuthorizationHeader.xEmbyAuthorization,
+      );
+      expect(headers.keys, ['X-Emby-Authorization']);
+      expect(headers['X-Emby-Authorization'], startsWith('Emby '));
+    });
+  });
 }

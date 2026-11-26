@@ -42,7 +42,10 @@ class RemoteSessionCastProvider
   Future<List<CastTarget>> discoverTargets(AggregatedItem item) async {
     final client = _clientFor(item);
     final sessions = await client.sessionApi.getSessions();
-    final selfDeviceId = client.deviceInfo.id;
+    final selfDeviceId = serverDeviceIdFor(
+      client.serverType,
+      client.deviceInfo,
+    );
 
     final targets = <CastTarget>[];
     for (final session in sessions) {

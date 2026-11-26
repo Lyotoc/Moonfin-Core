@@ -1,4 +1,5 @@
 import '../models/device_info.dart';
+import '../models/server_type.dart';
 import 'network_overrides.dart';
 
 String buildServerAuthorizationHeader({
@@ -15,12 +16,16 @@ String buildServerAuthorizationHeader({
 }
 
 /// Uses the configured Emby header and the credentials from the active session.
+///
+/// Pass [header] when an endpoint requires a fixed header name regardless of
+/// the default setting (for example Emby Connect's `/Connect/Exchange`).
 Map<String, String> buildEmbyAuthorizationHeaders({
   required DeviceInfo deviceInfo,
   String? accessToken,
   String? userId,
+  EmbyAuthorizationHeader? header,
 }) {
-  final header = gEmbyAuthorizationHeader;
+  final effectiveHeader = header ?? gEmbyAuthorizationHeader;
   final identity = _serverIdentityFields(
     deviceInfo,
     deviceName: gEmbyDeviceNameOverride,
@@ -28,7 +33,7 @@ Map<String, String> buildEmbyAuthorizationHeaders({
     version: gEmbyClientVersionOverride,
   );
   final hasToken = accessToken != null && accessToken.isNotEmpty;
-  final fields = switch (header) {
+  final fields = switch (effectiveHeader) {
     EmbyAuthorizationHeader.authorization => [
       ...identity,
       if (hasToken) _field('Token', accessToken),
@@ -41,7 +46,8 @@ Map<String, String> buildEmbyAuthorizationHeaders({
     ],
   };
   return {
-    header.value: '${gEmbyAuthorizationScheme.value} ${fields.join(', ')}',
+    effectiveHeader.value:
+        '${gEmbyAuthorizationScheme.value} ${fields.join(', ')}',
   };
 }
 
@@ -57,12 +63,19 @@ List<String> _serverIdentityFields(
   _field('Version', _valueOrDefault(version, deviceInfo.appVersion)),
 ];
 
-/// The device id Emby sees, which the configured override replaces.
+/// The device id Emby sees, sanitized to match the authorization header's
+/// `DeviceId` field.
 ///
-/// Playback and socket requests have to name the same device as the
-/// authorization header, or the server treats them as two devices.
+/// Playback, socket, cast and download requests have to name the same device
+/// as the authorization header, or the server treats them as two devices.
 String serverEmbyDeviceId(DeviceInfo deviceInfo) =>
-    _valueOrDefault(gEmbyDeviceIdOverride, deviceInfo.id);
+    _sanitizeHeaderValue(_valueOrDefault(gEmbyDeviceIdOverride, deviceInfo.id));
+
+/// The effective device id [serverType] sees for this client.
+String serverDeviceIdFor(ServerType serverType, DeviceInfo deviceInfo) =>
+    serverType == ServerType.emby
+    ? serverEmbyDeviceId(deviceInfo)
+    : deviceInfo.id;
 
 String _valueOrDefault(String value, String fallback) =>
     value.trim().isEmpty ? fallback : value;

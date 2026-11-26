@@ -187,7 +187,11 @@ class _AdminDevicesScreenState extends ConsumerState<AdminDevicesScreen> {
     final devicesAsync = ref.watch(adminDevicesProvider);
     final l10n = AppLocalizations.of(context);
     final theme = Theme.of(context);
-    final currentDeviceId = GetIt.instance<MediaServerClient>().deviceInfo.id;
+    final client = GetIt.instance<MediaServerClient>();
+    final currentDeviceId = serverDeviceIdFor(
+      client.serverType,
+      client.deviceInfo,
+    );
     bool isCurrent(DeviceInfoDto d) =>
         (d.reportedDeviceId ?? d.id) == currentDeviceId;
 

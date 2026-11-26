@@ -603,6 +603,57 @@ void main() {
       expect(response.statusCode, HttpStatus.ok);
       expect(seenHeaders['custom'], 'kept');
     });
+
+    test(
+      'follows a cross-origin redirect without leaking saved or auth headers',
+      () async {
+        final otherSeen = <String, String?>{};
+        final other = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => other.close(force: true));
+        other.listen((request) async {
+          otherSeen['custom'] = request.headers.value('X-Custom');
+          otherSeen['authorization'] = request.headers.value(
+            HttpHeaders.authorizationHeader,
+          );
+          request.response.statusCode = HttpStatus.ok;
+          request.response.write('{"other":true}');
+          await request.response.close();
+        });
+
+        final jump = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => jump.close(force: true));
+        jump.listen((request) async {
+          request.response.statusCode = HttpStatus.found;
+          request.response.headers.set(
+            HttpHeaders.locationHeader,
+            'http://127.0.0.1:${other.port}/final',
+          );
+          await request.response.close();
+        });
+
+        final origin = 'http://127.0.0.1:${jump.port}';
+        gServerRequestHeaders = [
+          ServerRequestHeader.tryCreate(
+            serverUrl: origin,
+            name: 'X-Custom',
+            value: 'secret',
+          )!,
+        ];
+
+        final dio = Dio(BaseOptions(baseUrl: origin));
+        configureServerDio(dio);
+        addTearDown(() => dio.close(force: true));
+
+        final response = await dio.get<dynamic>(
+          '/jump',
+          options: Options(headers: {'Authorization': 'Bearer tok'}),
+        );
+
+        expect(response.statusCode, HttpStatus.ok);
+        expect(otherSeen['custom'], isNull);
+        expect(otherSeen['authorization'], isNull);
+      },
+    );
   });
 }
 

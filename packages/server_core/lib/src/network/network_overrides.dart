@@ -115,39 +115,43 @@ String? serverProxyRuleFor(String address) {
 
   // Uri drops a port that matches the scheme's default (`http://host:80` and
   // `https://host:443`), so `hasPort` is false for an explicit one. Read the
-  // explicit port from the address itself before falling back.
-  final port = _explicitProxyPort(raw) ?? _defaultProxyPort(uri.scheme);
+  // explicit port from the address itself before falling back, and reject an
+  // invalid explicit port instead of silently substituting the default.
+  final explicitPort = _explicitProxyPortText(raw);
+  final int port;
+  if (explicitPort != null) {
+    final parsed = int.tryParse(explicitPort);
+    if (parsed == null || parsed < 1 || parsed > 65535) return null;
+    port = parsed;
+  } else {
+    port = _defaultProxyPort(uri.scheme);
+  }
   // Uri drops the brackets around an IPv6 literal, but dart:io's rule splits
   // host and port on the last colon, so a bare `::1` would parse as host `::`.
   final hostPart = host.contains(':') ? '[$host]' : host;
   return 'PROXY $hostPart:$port';
 }
 
-/// The port written in [raw], including one the URI would treat as the
-/// scheme's default, or null when the address leaves it out.
-int? _explicitProxyPort(String raw) {
+/// The raw port substring written in [raw], or null when the address leaves
+/// the port out.
+String? _explicitProxyPortText(String raw) {
   final schemeEnd = raw.indexOf('://');
   var authority = schemeEnd == -1 ? raw : raw.substring(schemeEnd + 3);
-  final pathStart = authority.indexOf('/');
-  if (pathStart != -1) authority = authority.substring(0, pathStart);
+  final authorityEnd = authority.indexOf(RegExp(r'[/?#]'));
+  if (authorityEnd != -1) authority = authority.substring(0, authorityEnd);
   final userInfoEnd = authority.lastIndexOf('@');
   if (userInfoEnd != -1) authority = authority.substring(userInfoEnd + 1);
 
-  final String portText;
   if (authority.startsWith('[')) {
     final close = authority.indexOf(']');
     if (close == -1) return null;
     final rest = authority.substring(close + 1);
     if (!rest.startsWith(':')) return null;
-    portText = rest.substring(1);
-  } else {
-    final colon = authority.lastIndexOf(':');
-    if (colon == -1) return null;
-    portText = authority.substring(colon + 1);
+    return rest.substring(1);
   }
-
-  final port = int.tryParse(portText);
-  return port != null && port > 0 && port <= 65535 ? port : null;
+  final colon = authority.lastIndexOf(':');
+  if (colon == -1) return null;
+  return authority.substring(colon + 1);
 }
 
 /// The port a proxy usually listens on when the address leaves it out.

@@ -93,11 +93,19 @@ class AetherProxyStream {
       }
     } catch (error) {
       // The player may disconnect while seeking or replacing a source.
-      // Report the upstream failure so a broken proxy route is diagnosable
-      // rather than a silent 502, then return a gateway error if no bytes
-      // have been written yet.
+      // Report the upstream failure without leaking query tokens (e.g.
+      // HttpException includes the full request URI) so a broken proxy route
+      // is diagnosable rather than a silent 502.
+      final detail = switch (error) {
+        HttpException(:final message) => message,
+        SocketException(:final message, :final osError) =>
+          osError == null ? message : '$message (${osError.message})',
+        HandshakeException(:final message) => message,
+        _ => error.runtimeType.toString(),
+      };
       debugPrint(
-        'Aether relay failed for ${loggableUrl(_source.toString())}: $error',
+        'Aether relay failed for ${loggableUrl(_source.toString())}: '
+        '${error.runtimeType}: $detail',
       );
       try {
         response.statusCode = HttpStatus.badGateway;

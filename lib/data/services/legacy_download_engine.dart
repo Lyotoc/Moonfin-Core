@@ -16,6 +16,7 @@ Future<void> _downloadIsolateMain(Map<String, Object?> args) async {
       args['clientCertificate'] as ClientCertificateMaterial?;
   final proxyUrl = args['proxyUrl'] as String? ?? '';
   final userAgent = args['userAgent'] as String? ?? '';
+  final rawRequestHeaders = (args['requestHeaders'] as List?) ?? const [];
 
   final cancelPort = ReceivePort();
   sendPort.send(<String, Object?>{'t': 'r', 'cp': cancelPort.sendPort});
@@ -35,11 +36,15 @@ Future<void> _downloadIsolateMain(Map<String, Object?> args) async {
         (_, host, _) => allowSelfSigned && host == serverHost;
     client.idleTimeout = const Duration(seconds: 120);
     gServerProxyUrl = proxyUrl;
-    client.findProxy = (_) => serverProxyFindProxy ?? 'DIRECT';
+    client.findProxy = (uri) =>
+        serverProxyFindProxy ?? HttpClient.findProxyFromEnvironment(uri);
     // The isolate also carries the User-Agent, since a server that filters on
     // it would otherwise see Dart's default here while the app sends Moonfin's.
     gServerUserAgentOverride = userAgent;
     client.userAgent = serverUserAgent;
+    gServerRequestHeaders = [
+      for (final item in rawRequestHeaders) ?ServerRequestHeader.fromJson(item),
+    ];
     if (clientCertificate != null) {
       // The connection factory reads these, and they start out empty in a new
       // isolate.
@@ -49,13 +54,54 @@ Future<void> _downloadIsolateMain(Map<String, Object?> args) async {
       applyClientCertificates(client);
     }
 
-    final request = await client.getUrl(Uri.parse(url));
-    headers.forEach(
-      (k, v) => request.headers.set(k, v, preserveHeaderCase: true),
-    );
-    request.headers.set('accept-encoding', 'identity');
+    // Follow redirects manually so origin-scoped saved headers never travel
+    // across a cross-origin redirect (dart:io only strips Authorization and
+    // Cookie automatically).
+    const crossOriginStrippedHeaders = {
+      'authorization',
+      'cookie',
+      'proxy-authorization',
+      'proxy-authenticate',
+      'www-authenticate',
+      'x-emby-authorization',
+      'x-emby-token',
+      'x-mediabrowser-token',
+      'x-plex-token',
+      'x-profile-token',
+    };
+    var target = Uri.parse(url);
+    var baseHeaders = Map<String, String>.from(headers);
+    late HttpClientResponse response;
+    for (var redirects = 0; ; redirects++) {
+      final request = await client.getUrl(target);
+      request.followRedirects = false;
+      baseHeaders.forEach(
+        (k, v) => request.headers.set(k, v, preserveHeaderCase: true),
+      );
+      serverRequestHeadersFor(target).forEach(
+        (k, v) => request.headers.set(k, v, preserveHeaderCase: true),
+      );
+      request.headers.set('accept-encoding', 'identity');
 
-    final response = await request.close();
+      response = await request.close();
+      final location = response.headers.value(HttpHeaders.locationHeader);
+      if (!response.isRedirect ||
+          location == null ||
+          location.isEmpty ||
+          redirects >= 5) {
+        break;
+      }
+      final next = target.resolve(location);
+      if (!isSameOriginRedirect(target, next)) {
+        baseHeaders = {
+          for (final entry in baseHeaders.entries)
+            if (!crossOriginStrippedHeaders.contains(entry.key.toLowerCase()))
+              entry.key: entry.value,
+        };
+      }
+      await response.drain<void>();
+      target = next;
+    }
     final statusCode = response.statusCode;
 
     if (statusCode < 200 || statusCode >= 300) {
@@ -160,6 +206,7 @@ class LegacyDownloadEngine {
       'clientCertificate': clientCertificate,
       'proxyUrl': gServerProxyUrl,
       'userAgent': gServerUserAgentOverride,
+      'requestHeaders': [for (final h in gServerRequestHeaders) h.toJson()],
     });
 
     SendPort? toIsolate;
